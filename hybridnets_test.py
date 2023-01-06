@@ -142,22 +142,85 @@ def speed_test(x):
     model.eval()
     x = torch.cat([x] * args.batch_size, 0)
     print(x.shape)
-
+    # NHWC
+    if args.channels_last:
+        model = model.to(memory_format=torch.channels_last)
+        x = x.contiguous(memory_format=torch.channels_last)
+        print("---- Use NHWC model")
     if use_cuda:
         model = model.cuda()
-        x.cuda()
 
     print('running speed test...')
     # uncomment this if you want a extreme fps test
     print('test2: model inferring only')
-    t1 = time.time()
-    for _ in range(args.num_iter):
-        _, regression, classification, anchors, segmentation = model(x)
+    total_time = 0.0
+    total_sample = 0
+    if args.profile:
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+            record_shapes=True,
+            schedule=torch.profiler.schedule(
+                wait=int(args.num_iter/2),
+                warmup=2,
+                active=1,
+            ),
+            on_trace_ready=trace_handler,
+        ) as p:
+            for i in range(args.num_iter):
+                x = x.to('cpu')
+                elapsed = time.time()
+                x = x.to(args.device)
+                model(x)
+                if torch.cuda.is_available(): torch.cuda.synchronize()
+                elapsed = time.time() - elapsed
+                p.step()
+                print("Iteration: {}, inference time: {} sec.".format(i, elapsed), flush=True)
+                if i >= args.num_warmup:
+                    total_time += elapsed
+                    total_sample += args.batch_size
+    else:
+        for i in range(args.num_iter):
+            x = x.to('cpu')
+            elapsed = time.time()
+            x = x.to(args.device)
+            model(x)
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            elapsed = time.time() - elapsed
+            print("Iteration: {}, inference time: {} sec.".format(i, elapsed), flush=True)
+            if i >= args.num_warmup:
+                total_time += elapsed
+                total_sample += args.batch_size
 
-    t2 = time.time()
-    tact_time = (t2 - t1) / args.num_iter
-    print(f'{tact_time} seconds, {args.batch_size / tact_time} FPS, @batch_size {args.batch_size}')
+    throughput = total_sample / total_time
+    latency = total_time / total_sample * 1000
+    print('inference latency: %.3f ms' % latency)
+    print('inference Throughput: %f images/s' % throughput)
+    print(f'{latency} ms, {throughput} FPS, @batch_size {args.batch_size}')
+
+def trace_handler(p):
+    output = p.key_averages().table(sort_by="self_cpu_time_total")
+    print(output)
+    import pathlib
+    timeline_dir = str(pathlib.Path.cwd()) + '/timeline/'
+    if not os.path.exists(timeline_dir):
+        try:
+            os.makedirs(timeline_dir)
+        except:
+            pass
+    timeline_file = timeline_dir + 'timeline-' + str(torch.backends.quantized.engine) + '-' + \
+                'HybridNets-' + str(p.step_num) + '-' + str(os.getpid()) + '.json'
+    p.export_chrome_trace(timeline_file)
 
 
 if __name__ == "__main__":
-    speed_test(x)
+
+    if args.precision == "bfloat16":
+        print('---- Enable AMP bfloat16')
+        with torch.cpu.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            speed_test(x)
+    elif args.precision == "float16":
+        print('---- Enable AMP float16')
+        with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
+            speed_test(x)
+    else:
+        speed_test(x)
