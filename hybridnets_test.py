@@ -46,6 +46,10 @@ parser.add_argument('--profile', dest='profile', action='store_true', help='prof
 parser.add_argument('--quantized_engine', type=str, default=None, help='quantized_engine')
 parser.add_argument('--ipex', dest='ipex', action='store_true', help='ipex')
 parser.add_argument('--jit', dest='jit', action='store_true', help='jit')
+parser.add_argument("--compile", action='store_true', default=False,
+                    help="enable torch.compile")
+parser.add_argument("--backend", type=str, default='inductor',
+                    help="enable torch.compile backend")
 
 args = parser.parse_args()
 
@@ -142,6 +146,8 @@ def speed_test(x):
     model.eval()
     x = torch.cat([x] * args.batch_size, 0)
     print(x.shape)
+    if args.compile:
+        model = torch.compile(model, backend=args.backend, options={"freezing": True})
     # NHWC
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
