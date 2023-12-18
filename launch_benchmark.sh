@@ -18,6 +18,9 @@ function main {
         set -x
     fi
     pip install -r requirements.txt
+    if [ "${device}" == "cuda" ];then
+        pip install opencv-python==4.8.0.74
+    fi
 
     # if multiple use 'xxx,xxx,xxx'
     model_name_list=($(echo "${model_name}" |sed 's/,/ /g'))
