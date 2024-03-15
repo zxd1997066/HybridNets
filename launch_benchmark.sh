@@ -41,7 +41,7 @@ function main {
         for batch_size in ${batch_size_list[@]}
         do
             if [ $batch_size -le 0 ];then
-                batch_size=256
+                batch_size=128
             fi
             # clean workspace
             logs_path_clean
